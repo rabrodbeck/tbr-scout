@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
   Trophy,
   Target,
@@ -206,12 +207,16 @@ export function ReadingGoalWidget({
       {/* Progress Bar Container */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-xs">
-          <span className="font-extrabold text-foreground">
+          <Link
+            href={`/library?shelf=read&year=${pacing.year}`}
+            className="font-extrabold text-foreground hover:text-primary transition-colors hover:underline inline-flex items-center gap-1"
+            title={`View ${pacing.year} books read in library`}
+          >
             {pacing.readCount}{" "}
             <span className="font-normal text-muted-foreground">
               of {pacing.goal} book{pacing.goal > 1 ? "s" : ""} read
             </span>
-          </span>
+          </Link>
           <span className="font-mono font-bold text-primary">{pacing.percentage}%</span>
         </div>
 

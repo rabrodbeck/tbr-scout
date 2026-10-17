@@ -77,6 +77,7 @@ interface LibraryStats {
 
 type ShelfFilter = "all" | "read" | "to-read" | "currently-reading" | "recommended" | "series";
 type SortOption = "rating-desc" | "title-asc" | "author-asc" | "date-read-desc";
+export type YearFilter = number | "lifetime" | "all";
 
 function LibraryBookCover({
   coverUrl,
@@ -259,6 +260,7 @@ export default function LibraryPage() {
   // Filters & Search
   const [search, setSearch] = React.useState("");
   const [activeShelf, setActiveShelf] = React.useState<ShelfFilter>("all");
+  const [selectedYear, setSelectedYear] = React.useState<YearFilter>("all");
   const [minRating, setMinRating] = React.useState<number | null>(null);
   const [sortBy, setSortBy] = React.useState<SortOption>("rating-desc");
 
@@ -278,7 +280,7 @@ export default function LibraryPage() {
   const [isOfflineMode, setIsOfflineMode] = React.useState(false);
 
   React.useEffect(() => {
-    // 0. Check URL deep-link parameter (e.g. /library?shelf=recommended from notifications)
+    // 0. Check URL deep-link parameter (e.g. /library?shelf=recommended or ?year=2026)
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
       const shelfParam = urlParams.get("shelf");
@@ -291,6 +293,18 @@ export default function LibraryPage() {
         shelfParam === "series"
       ) {
         setActiveShelf(shelfParam as ShelfFilter);
+      }
+
+      const yearParam = urlParams.get("year");
+      if (yearParam === "lifetime") {
+        setSelectedYear("lifetime");
+      } else if (yearParam === "all") {
+        setSelectedYear("all");
+      } else if (yearParam) {
+        const parsed = parseInt(yearParam, 10);
+        if (!isNaN(parsed) && parsed >= 1900 && parsed <= 2100) {
+          setSelectedYear(parsed);
+        }
       }
     }
 
@@ -420,6 +434,63 @@ export default function LibraryPage() {
   const seriesCount = React.useMemo(() => {
     return groupBooksBySeries(books).length;
   }, [books]);
+
+  // Dynamic extraction of completion years and lifetime reads (Issue #77)
+  const { yearOptions, lifetimeCount } = React.useMemo(() => {
+    const readBooks = books.filter((b) => b.shelf === "read");
+    const yearCountMap = new Map<number, number>();
+    let lifetime = 0;
+
+    for (const b of readBooks) {
+      if (b.date_read) {
+        const d = new Date(b.date_read);
+        if (!isNaN(d.getTime())) {
+          const yr = d.getFullYear();
+          yearCountMap.set(yr, (yearCountMap.get(yr) || 0) + 1);
+        } else {
+          lifetime++;
+        }
+      } else {
+        lifetime++;
+      }
+    }
+
+    const sortedYears = Array.from(yearCountMap.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([year, count]) => ({ year, count }));
+
+    return { yearOptions: sortedYears, lifetimeCount: lifetime };
+  }, [books]);
+
+  // URL-synchronized shelf & year tab handlers
+  const handleShelfChangeTab = (shelf: ShelfFilter) => {
+    setActiveShelf(shelf);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (shelf === "all") {
+        url.searchParams.delete("shelf");
+      } else {
+        url.searchParams.set("shelf", shelf);
+      }
+      if (shelf !== "read" && shelf !== "all") {
+        url.searchParams.delete("year");
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  const handleYearChangeTab = (year: YearFilter) => {
+    setSelectedYear(year);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (year === "all") {
+        url.searchParams.delete("year");
+      } else {
+        url.searchParams.set("year", year.toString());
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
 
   const handleStartReadingFromConcierge = async (pick: ConciergePick) => {
     const targetBook = books.find((b) => b.book_id === pick.bookId || b.id === pick.userBookId);
@@ -609,6 +680,23 @@ export default function LibraryPage() {
           return false;
         }
 
+        // Year / Lifetime Filter (Applies when viewing 'read' or 'all' shelf)
+        if ((activeShelf === "read" || activeShelf === "all") && selectedYear !== "all") {
+          if (selectedYear === "lifetime") {
+            // Lifetime reads are read books without a completion date
+            if (book.shelf !== "read" || book.date_read) {
+              return false;
+            }
+          } else {
+            // Specific year
+            if (!book.date_read) return false;
+            const d = new Date(book.date_read);
+            if (isNaN(d.getTime()) || d.getFullYear() !== selectedYear) {
+              return false;
+            }
+          }
+        }
+
         // Rating Filter
         if (minRating !== null && (!book.rating || book.rating < minRating)) {
           return false;
@@ -639,7 +727,7 @@ export default function LibraryPage() {
         }
         return 0;
       });
-  }, [books, activeShelf, minRating, search, sortBy]);
+  }, [books, activeShelf, selectedYear, minRating, search, sortBy]);
 
   if (loading) {
     return (
@@ -902,7 +990,7 @@ export default function LibraryPage() {
           <Button
             variant={activeShelf === "all" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setActiveShelf("all")}
+            onClick={() => handleShelfChangeTab("all")}
             className="h-8 text-xs px-2.5"
           >
             All ({books.length})
@@ -910,7 +998,7 @@ export default function LibraryPage() {
           <Button
             variant={activeShelf === "read" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setActiveShelf("read")}
+            onClick={() => handleShelfChangeTab("read")}
             className="h-8 text-xs px-2.5"
           >
             Read ({stats?.read || 0})
@@ -918,7 +1006,7 @@ export default function LibraryPage() {
           <Button
             variant={activeShelf === "to-read" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setActiveShelf("to-read")}
+            onClick={() => handleShelfChangeTab("to-read")}
             className="h-8 text-xs px-2.5"
           >
             Want to Read ({stats?.toRead || 0})
@@ -927,7 +1015,7 @@ export default function LibraryPage() {
             <Button
               variant={activeShelf === "currently-reading" ? "default" : "ghost"}
               size="sm"
-              onClick={() => setActiveShelf("currently-reading")}
+              onClick={() => handleShelfChangeTab("currently-reading")}
               className="h-8 text-xs px-2.5"
             >
               Currently Reading ({stats.currentlyReading})
@@ -937,7 +1025,7 @@ export default function LibraryPage() {
           <Button
             variant={activeShelf === "recommended" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setActiveShelf("recommended")}
+            onClick={() => handleShelfChangeTab("recommended")}
             className={`h-8 text-xs px-2.5 gap-1.5 ${
               activeShelf === "recommended"
                 ? "bg-amber-600 hover:bg-amber-700 text-white"
@@ -951,7 +1039,7 @@ export default function LibraryPage() {
           <Button
             variant={activeShelf === "series" ? "default" : "ghost"}
             size="sm"
-            onClick={() => setActiveShelf("series")}
+            onClick={() => handleShelfChangeTab("series")}
             className={`h-8 text-xs px-2.5 gap-1.5 ${
               activeShelf === "series"
                 ? "bg-purple-600 hover:bg-purple-700 text-white"
@@ -978,6 +1066,60 @@ export default function LibraryPage() {
           </select>
         </div>
       </div>
+
+      {/* Year Read & Lifetime Filter Pills (Visible when viewing Read or All shelves) */}
+      {(activeShelf === "read" || activeShelf === "all") && (yearOptions.length > 0 || lifetimeCount > 0) && (
+        <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 text-xs text-muted-foreground scrollbar-none">
+          <div className="flex items-center gap-1.5 font-semibold text-foreground/80 shrink-0">
+            <Calendar className="size-3.5 text-primary" />
+            <span>Year Read:</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleYearChangeTab("all")}
+            className={`px-2.5 py-1 rounded-full border transition-all text-xs shrink-0 cursor-pointer ${
+              selectedYear === "all"
+                ? "bg-primary/10 border-primary text-primary font-bold shadow-xs"
+                : "border-border/60 hover:border-foreground/40 text-foreground/80"
+            }`}
+          >
+            All Years ({activeShelf === "read" ? stats?.read || 0 : books.filter((b) => b.shelf === "read").length})
+          </button>
+
+          {yearOptions.map(({ year, count }) => (
+            <button
+              key={year}
+              type="button"
+              onClick={() => handleYearChangeTab(year)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all text-xs shrink-0 cursor-pointer ${
+                selectedYear === year
+                  ? "bg-primary/10 border-primary text-primary font-bold shadow-xs"
+                  : "border-border/60 hover:border-foreground/40 text-foreground/80"
+              }`}
+            >
+              <span>{year}</span>
+              <span className="text-[10px] opacity-75 font-mono">({count})</span>
+            </button>
+          ))}
+
+          {lifetimeCount > 0 && (
+            <button
+              type="button"
+              onClick={() => handleYearChangeTab("lifetime")}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs shrink-0 cursor-pointer ${
+                selectedYear === "lifetime"
+                  ? "bg-amber-500/20 border-amber-500 text-amber-700 dark:text-amber-400 font-bold shadow-xs"
+                  : "border-amber-500/40 text-amber-700 dark:text-amber-400 hover:border-amber-500 bg-amber-500/5"
+              }`}
+            >
+              <Sparkles className="size-3 text-amber-500" />
+              <span>Lifetime Reads</span>
+              <span className="text-[10px] opacity-80 font-mono">({lifetimeCount})</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Rating Filter Pills */}
       <div className="flex items-center gap-2 mb-6 overflow-x-auto text-xs text-muted-foreground">
@@ -1015,6 +1157,38 @@ export default function LibraryPage() {
           <span>4+ Stars ({(stats?.fiveStarCount || 0) + (stats?.fourStarCount || 0)})</span>
         </button>
       </div>
+
+      {/* Lifetime Reads Dedicated Showcase Banner */}
+      {(activeShelf === "read" || activeShelf === "all") && selectedYear === "lifetime" && (
+        <div className="mb-6 p-4 rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+              <Sparkles className="size-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-foreground">
+                  Lifetime Reads Catalog
+                </h3>
+                <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-300 bg-amber-500/15">
+                  {lifetimeCount} {lifetimeCount === 1 ? "Book" : "Books"}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 max-w-2xl">
+                All-time favorites and past books logged without specific completion dates. These enrich your Reading DNA and AI Librarian recommendations without skewing your annual reading challenge pace.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleYearChangeTab("all")}
+            className="text-xs font-semibold shrink-0 border-amber-500/40 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          >
+            Show All Years
+          </Button>
+        </div>
+      )}
 
       {/* Want to Read AI Concierge Prompt Callout */}
       {activeShelf === "to-read" && stats && stats.toRead > 0 && (
@@ -1148,7 +1322,8 @@ export default function LibraryPage() {
             size="sm"
             onClick={() => {
               setSearch("");
-              setActiveShelf("all");
+              handleShelfChangeTab("all");
+              handleYearChangeTab("all");
               setMinRating(null);
             }}
           >

@@ -155,9 +155,17 @@ export default function InsightsPage() {
               <span className="text-3xl font-black text-foreground block">
                 {insights?.totalBooks ?? 0}
               </span>
-              <span className="text-[11px] text-muted-foreground">
-                {selectedYear === "all" ? "Across all tracked years" : `Read during ${selectedYear}`}
-              </span>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-[11px] text-muted-foreground">
+                  {selectedYear === "all" ? "Across all tracked years" : `Read during ${selectedYear}`}
+                </span>
+                <Link
+                  href={selectedYear === "all" ? "/library?shelf=read" : `/library?shelf=read&year=${selectedYear}`}
+                  className="text-[11px] text-primary hover:underline font-semibold"
+                >
+                  View on shelf →
+                </Link>
+              </div>
             </div>
           </CardContent>
         </Card>
