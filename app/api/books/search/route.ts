@@ -660,16 +660,25 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Check if we already have an exact or strong title match
+    // Check if query matches an author bibliography (multiple books by the author in olResults)
     const normQuery = normalizeTitle(query);
-    const hasExactTitleMatch = olResults.some(
-      (r) =>
-        normalizeTitle(r.title).includes(normQuery) ||
-        normQuery.includes(normalizeTitle(r.title))
-    );
+    const isAuthorQuery =
+      olResults.filter(
+        (r) =>
+          normalizeTitle(r.author).includes(normQuery) ||
+          normQuery.includes(normalizeTitle(r.author))
+      ).length >= 2;
 
-    // If Open Library yielded fewer than 5 results OR missing exact match, supplement with Google Books and Gemini
-    if (olResults.length < 5 || !hasExactTitleMatch) {
+    // Check if we already have an authentic exact title match (ignoring placeholders like "Untitled <Author>")
+    const hasExactTitleMatch = olResults.some((r) => {
+      const normTitle = normalizeTitle(r.title);
+      if (normTitle.startsWith("untitled")) return false;
+      return normTitle.includes(normQuery) || normQuery.includes(normTitle);
+    });
+
+    // If Open Library yielded fewer than 5 results, OR this is an author search (to include unindexed new releases),
+    // OR missing exact title match, supplement with Google Books and Gemini Google Search Grounding
+    if (olResults.length < 5 || isAuthorQuery || !hasExactTitleMatch) {
       const [gbResults, geminiResults] = await Promise.all([
         searchGoogleBooks(query),
         searchGeminiBooks(query),
@@ -681,8 +690,12 @@ export async function GET(request: NextRequest) {
         const norm = normalizeTitle(item.title);
         if (!existingKeys.has(norm)) {
           existingKeys.add(norm);
-          // If this is an exact title match for our query, prioritize at the front
-          if (norm.includes(normQuery) || normQuery.includes(norm)) {
+          // If this is an exact title match or a new release for author searches, prioritize at the front
+          if (
+            norm.includes(normQuery) ||
+            normQuery.includes(norm) ||
+            (isAuthorQuery && item.published_year && item.published_year >= 2024)
+          ) {
             olResults.unshift(item);
           } else {
             olResults.push(item);
