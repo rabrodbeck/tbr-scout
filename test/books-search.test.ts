@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { normalizeTitle, searchGoogleBooks, GET, clearIsbnCache } from "@/app/api/books/search/route";
+import {
+  normalizeTitle,
+  searchGoogleBooks,
+  parseGoodreadsHtml,
+  fetchGoodreadsIsbn,
+  searchGeminiBooks,
+  fetchGeminiIsbn,
+  GET,
+  clearIsbnCache,
+} from "@/app/api/books/search/route";
 import { isStudyGuideOrJunk, isBadCoverUrl, isbn13To10 } from "@/services/books/cover-service";
 import { NextRequest } from "next/server";
 
@@ -203,6 +212,168 @@ describe("Multi-Provider Book Search (Phase 1)", () => {
       const json2 = await res2.json();
       expect(json2.results[0].title).toBe("Dune");
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("falls back to Gemini Google Search Grounding when ISBN is missing from Open Library", async () => {
+      clearIsbnCache();
+      process.env.GEMINI_API_KEY = "mock_key";
+
+      vi.spyOn(global, "fetch").mockImplementation(async (url: any) => {
+        if (typeof url === "string" && url.includes("openlibrary.org")) {
+          return { ok: false, status: 404, json: async () => ({}) } as any;
+        }
+        if (typeof url === "string" && url.includes("googleapis.com/books")) {
+          return { ok: false, status: 429, json: async () => ({}) } as any;
+        }
+        if (typeof url === "string" && url.includes("goodreads.com")) {
+          return { ok: false, status: 404, text: async () => "" } as any;
+        }
+        if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        text: JSON.stringify([
+                          {
+                            title: "You First: A Joe Goldberg Prequel",
+                            author: "Caroline Kepnes",
+                            published_year: 2026,
+                            isbn10: "039959146X",
+                            isbn13: "9780399591464",
+                            page_count: 416,
+                            genres: ["Thriller"],
+                            description: "Joe Goldberg origin story.",
+                          },
+                        ]),
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          } as any;
+        }
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      });
+
+      const req = new NextRequest("http://localhost:3000/api/books/search?q=039959146X");
+      const res = await GET(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.results.length).toBe(1);
+      const book = json.results[0];
+      expect(book.title).toBe("You First: A Joe Goldberg Prequel");
+      expect(book.author).toBe("Caroline Kepnes");
+      expect(book.isbn).toBe("039959146X");
+      expect(book.isbn13).toBe("9780399591464");
+      expect(book.page_count).toBe(416);
+      expect(book.cover_url).toBe(
+        "https://images-na.ssl-images-amazon.com/images/P/039959146X.01.LZZZZZZZ.jpg"
+      );
+    });
+
+    it("surfaces exact title matches from Gemini when Open Library returns 0 matches for a title search", async () => {
+      clearIsbnCache();
+      process.env.GEMINI_API_KEY = "mock_key";
+
+      vi.spyOn(global, "fetch").mockImplementation(async (url: any) => {
+        if (typeof url === "string" && url.includes("openlibrary.org/search.json")) {
+          return { ok: true, status: 200, json: async () => ({ docs: [] }) } as any;
+        }
+        if (typeof url === "string" && url.includes("googleapis.com/books")) {
+          return { ok: false, status: 429, json: async () => ({}) } as any;
+        }
+        if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        text: JSON.stringify([
+                          {
+                            title: "You First: A Joe Goldberg Prequel",
+                            author: "Caroline Kepnes",
+                            published_year: 2026,
+                            isbn10: "039959146X",
+                            isbn13: "9780399591464",
+                            page_count: 416,
+                            genres: ["Thriller"],
+                            description: "Joe Goldberg origin story.",
+                          },
+                        ]),
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+          } as any;
+        }
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      });
+
+      const req = new NextRequest(
+        "http://localhost:3000/api/books/search?q=You+First%3A+A+Joe+Goldberg+Prequel"
+      );
+      const res = await GET(req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.results.length).toBeGreaterThanOrEqual(1);
+      expect(json.results[0].title).toBe("You First: A Joe Goldberg Prequel");
+      expect(json.results[0].author).toBe("Caroline Kepnes");
+      expect(json.results[0].page_count).toBe(416);
+    });
+  });
+
+  describe("parseGoodreadsHtml", () => {
+    it("extracts structured JSON-LD data and Amazon CDN covers", () => {
+      const sampleHtml = `
+        <html>
+        <head>
+          <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "Book",
+            "name": "You First: A Joe Goldberg Prequel (You, #0)",
+            "image": "https://m.media-amazon.com/images/S/compressed.photo.goodreads.com/books/1760066717i/241483196._SX98_.jpg",
+            "author": [{"@type":"Person","name":"Caroline Kepnes"}],
+            "numberOfPages": 416,
+            "isbn": "9780399591464"
+          }
+          </script>
+          <meta property="og:description" content="Joe Goldberg prequel origin story." />
+        </head>
+        <body>
+          <a href="/genres/thriller">Thriller</a>
+          <a href="/genres/mystery">Mystery</a>
+        </body>
+        </html>
+      `;
+
+      const result = parseGoodreadsHtml(sampleHtml, "/isbn/039959146X", "039959146X");
+      expect(result).not.toBeNull();
+      expect(result?.title).toBe("You First: A Joe Goldberg Prequel (You, #0)");
+      expect(result?.author).toBe("Caroline Kepnes");
+      expect(result?.page_count).toBe(416);
+      expect(result?.isbn13).toBe("9780399591464");
+      expect(result?.isbn).toBe("039959146X");
+      // Dimension compression filters stripped
+      expect(result?.cover_url).toBe(
+        "https://m.media-amazon.com/images/S/compressed.photo.goodreads.com/books/1760066717i/241483196.jpg"
+      );
+      expect(result?.genres).toContain("Thriller");
+      expect(result?.genres).toContain("Mystery");
     });
   });
 });

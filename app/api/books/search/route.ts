@@ -36,9 +36,11 @@ export function normalizeTitle(title: string): string {
  */
 export async function searchGoogleBooks(query: string): Promise<SearchResultItem[]> {
   try {
+    const apiKey = process.env.GOOGLE_BOOKS_API_KEY;
+    const keyParam = apiKey ? `&key=${apiKey}` : "";
     const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(
       query
-    )}&maxResults=10&printType=books`;
+    )}&maxResults=10&printType=books${keyParam}`;
 
     const res = await fetch(url, {
       signal: AbortSignal.timeout(6000),
@@ -122,6 +124,220 @@ export async function searchGoogleBooks(query: string): Promise<SearchResultItem
     console.warn("Google Books search fallback failed:", err);
     return [];
   }
+}
+
+/**
+ * Parses Goodreads HTML (JSON-LD, og:tags, genres) into a normalized SearchResultItem
+ */
+export function parseGoodreadsHtml(
+  html: string,
+  fallbackKey?: string,
+  fallbackIsbn?: string
+): SearchResultItem | null {
+  const jsonLdMatch = html.match(/<script\s+type=["']application\/ld\+json["']>([\s\S]*?)<\/script>/i);
+  let ld: any = null;
+  if (jsonLdMatch) {
+    try {
+      ld = JSON.parse(jsonLdMatch[1]);
+    } catch {
+      ld = null;
+    }
+  }
+
+  const ogTitleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
+  const ogDescMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
+  const ogImageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+
+  let title = (ld?.name || ogTitleMatch?.[1] || "").trim();
+  if (!title) return null;
+
+  // Clean trailing " by Author"
+  title = title.replace(/\s+by\s+[^]+$/i, "").trim();
+
+  let author = "Unknown Author";
+  if (Array.isArray(ld?.author) && ld.author[0]?.name) {
+    author = ld.author[0].name.trim();
+  } else if (ld?.author?.name) {
+    author = ld.author.name.trim();
+  } else {
+    const authorMatch = html.match(/class=["']authorName["'][^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i);
+    if (authorMatch?.[1]) author = authorMatch[1].trim();
+  }
+
+  if (isStudyGuideOrJunk(title, author)) return null;
+
+  let coverUrl = ld?.image || ogImageMatch?.[1] || null;
+  if (coverUrl) {
+    coverUrl = coverUrl.replace(/\._S[XY]\d+_/, "");
+    if (isBadCoverUrl(coverUrl)) coverUrl = null;
+  }
+
+  const isbnRaw = ld?.isbn ? String(ld.isbn).replace(/[^0-9X]/gi, "") : (fallbackIsbn || null);
+  let isbn10: string | null = null;
+  let isbn13: string | null = null;
+
+  if (isbnRaw) {
+    if (isbnRaw.length === 10) {
+      isbn10 = isbnRaw;
+    } else if (isbnRaw.length === 13) {
+      isbn13 = isbnRaw;
+      isbn10 = isbn13To10(isbnRaw);
+    }
+  }
+
+  if (!coverUrl && isbn10) {
+    coverUrl = `https://images-na.ssl-images-amazon.com/images/P/${isbn10}.01.LZZZZZZZ.jpg`;
+  }
+
+  let publishedYear: number | null = null;
+  const pubMatch = html.match(/published[\s\S]*?\b(19\d\d|20\d\d)\b/i) || html.match(/\b(19\d\d|20\d\d)\b/);
+  if (pubMatch) {
+    publishedYear = parseInt(pubMatch[1], 10);
+  }
+
+  const genreMatches = [...html.matchAll(/\/genres\/([a-zA-Z\-]+)/gi)];
+  const genres = [...new Set(genreMatches.map((m) => {
+    const raw = m[1].replace(/-/g, " ");
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }))].slice(0, 5);
+
+  const pageCount = typeof ld?.numberOfPages === "number" ? ld.numberOfPages : null;
+  const snippet = ogDescMatch?.[1] ? ogDescMatch[1].trim() : null;
+
+  return {
+    key: fallbackKey || `/goodreads/${isbnRaw || normalizeTitle(title).replace(/\s+/g, "-")}`,
+    title,
+    author,
+    cover_url: coverUrl,
+    published_year: publishedYear,
+    page_count: pageCount,
+    isbn: isbn10,
+    isbn13: isbn13,
+    genres,
+    snippet,
+  };
+}
+
+/**
+ * Attempts high-speed direct Goodreads lookup by ISBN
+ */
+export async function fetchGoodreadsIsbn(cleanIsbn: string): Promise<SearchResultItem | null> {
+  const url = `https://www.goodreads.com/book/isbn/${cleanIsbn}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      return parseGoodreadsHtml(html, `/isbn/${cleanIsbn}`, cleanIsbn);
+    }
+  } catch {
+    // Non-fatal
+  }
+  return null;
+}
+
+/**
+ * Searches Gemini with Google Search grounding for verified real-time bibliographic data.
+ * Ideal for new releases, unindexed books, and queries that return 0 results from Open Library.
+ */
+export async function searchGeminiBooks(query: string): Promise<SearchResultItem[]> {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+    const prompt = `Search Google and return bibliographic details for: "${query}".
+Return ONLY a valid JSON array of up to 5 matching real books in this exact format:
+[
+  {
+    "title": "Exact Title of Book",
+    "author": "Author Name",
+    "published_year": 2026,
+    "isbn10": "039959146X",
+    "isbn13": "9780399591464",
+    "page_count": 416,
+    "genres": ["Thriller", "Suspense"],
+    "description": "Short synopsis"
+  }
+]`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ googleSearch: {} }],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p: any) => p.text).filter(Boolean).join("\n") || "";
+
+    const jsonMatch = text.match(/\[[\s\S]*\]/) || text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
+
+    let parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) {
+      parsed = [parsed];
+    }
+
+    const results: SearchResultItem[] = [];
+
+    for (const b of parsed) {
+      if (!b.title || !b.author || isStudyGuideOrJunk(b.title, b.author)) continue;
+
+      const raw10 = b.isbn10 ? String(b.isbn10).replace(/[^0-9X]/gi, "") : null;
+      const raw13 = b.isbn13 ? String(b.isbn13).replace(/[^0-9]/g, "") : null;
+      const isbn10 = raw10 && raw10.length === 10 ? raw10 : (raw13 ? isbn13To10(raw13) : null);
+      const isbn13 = raw13 && raw13.length === 13 ? raw13 : null;
+
+      let coverUrl: string | null = null;
+      if (isbn10 && isbn10.length === 10) {
+        coverUrl = `https://images-na.ssl-images-amazon.com/images/P/${isbn10}.01.LZZZZZZZ.jpg`;
+      }
+      if (isBadCoverUrl(coverUrl)) coverUrl = null;
+
+      results.push({
+        key: `/gemini/${isbn13 || isbn10 || normalizeTitle(b.title).replace(/\s+/g, "-")}`,
+        title: b.title.trim(),
+        author: b.author.trim(),
+        cover_url: coverUrl,
+        published_year: typeof b.published_year === "number" ? b.published_year : null,
+        page_count: typeof b.page_count === "number" ? b.page_count : null,
+        isbn: isbn10,
+        isbn13: isbn13,
+        genres: Array.isArray(b.genres) ? b.genres.slice(0, 5) : [],
+        snippet: b.description ? String(b.description).slice(0, 260) : null,
+      });
+    }
+
+    return results;
+  } catch (err) {
+    console.warn("Gemini search grounding fallback failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Direct Gemini + Google Search Grounding ISBN lookup
+ */
+export async function fetchGeminiIsbn(cleanIsbn: string): Promise<SearchResultItem | null> {
+  const results = await searchGeminiBooks(`ISBN ${cleanIsbn}`);
+  return results.length > 0 ? results[0] : null;
 }
 
 interface CachedBookResult {
@@ -264,17 +480,26 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      // 2. Parallel Provider Race (Open Library Direct Books API + Google Books)
-      const [olMatch, gbMatch] = await Promise.all([
+      // 2. Parallel Provider Race (Open Library Direct Books API + Google Books + Goodreads)
+      const [olMatch, gbMatch, grMatch] = await Promise.all([
         fetchOpenLibraryIsbn(cleanIsbn),
         fetchGoogleBooksIsbn(cleanIsbn),
+        fetchGoodreadsIsbn(cleanIsbn),
       ]);
 
-      const primary = olMatch || gbMatch;
+      let primary = olMatch || gbMatch || grMatch;
+
+      // 3. Fallback to Gemini with Google Search Grounding for new releases or unindexed ISBNs
+      if (!primary) {
+        primary = await fetchGeminiIsbn(cleanIsbn);
+      }
+
       if (primary) {
         const results = [primary];
-        if (gbMatch && olMatch && gbMatch.title.toLowerCase() !== olMatch.title.toLowerCase()) {
-          results.push(gbMatch);
+        for (const alt of [gbMatch, grMatch]) {
+          if (alt && alt.title.toLowerCase() !== primary.title.toLowerCase()) {
+            results.push(alt);
+          }
         }
         isbnCache.set(cleanIsbn, { timestamp: Date.now(), results });
         return NextResponse.json(
@@ -371,19 +596,97 @@ export async function GET(request: NextRequest) {
         }
       }
     } catch (olError) {
-      console.warn("Open Library search request failed, falling back to Google Books:", olError);
+      console.warn("Open Library search request failed, falling back to secondary providers:", olError);
     }
 
-    // If Open Library yielded fewer than 3 results or failed, supplement with Google Books
-    if (olResults.length < 3) {
-      const gbResults = await searchGoogleBooks(query);
+    // If query has a subtitle (e.g. "You First: A Joe Goldberg Prequel"), also try searching by primary title
+    if (olResults.length < 3 && /[:\-]/.test(query)) {
+      const primaryTitle = query.split(/[:\-]/)[0].trim();
+      if (primaryTitle.length >= 2 && primaryTitle.toLowerCase() !== query.toLowerCase()) {
+        try {
+          const subUrl = `https://openlibrary.org/search.json?q=${encodeURIComponent(
+            primaryTitle
+          )}&page=1&limit=10&fields=key,title,author_name,cover_i,first_publish_year,number_of_pages_median,isbn,subject,first_sentence,language,editions`;
+
+          const subRes = await fetch(subUrl, {
+            headers: { "User-Agent": "TBRScout/1.0 (contact@tbrscout.vercel.app)" },
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (subRes.ok) {
+            const subData = await subRes.json();
+            const docs = Array.isArray(subData.docs) ? subData.docs : [];
+            const existingKeys = new Set(olResults.map((r) => normalizeTitle(r.title)));
+
+            for (const doc of docs) {
+              const title = doc.title || "Untitled";
+              const author = Array.isArray(doc.author_name)
+                ? doc.author_name[0]
+                : (doc.author_name || "Unknown Author");
+
+              if (isStudyGuideOrJunk(title, author)) continue;
+              if (existingKeys.has(normalizeTitle(title))) continue;
+
+              const isbns: string[] = Array.isArray(doc.isbn) ? doc.isbn : [];
+              const isbn13 = isbns.find((i) => i.replace(/-/g, "").length === 13) || null;
+              const isbn10 = isbns.find((i) => i.replace(/-/g, "").length === 10) || isbns[0] || null;
+
+              let coverUrl = doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : null;
+              if (!coverUrl) {
+                const resolvedIsbn10 = isbn10 || (isbn13 ? isbn13To10(isbn13) : null);
+                if (resolvedIsbn10 && resolvedIsbn10.length === 10) {
+                  coverUrl = `https://images-na.ssl-images-amazon.com/images/P/${resolvedIsbn10}.01.LZZZZZZZ.jpg`;
+                }
+              }
+
+              existingKeys.add(normalizeTitle(title));
+              olResults.push({
+                key: doc.key || "",
+                title,
+                author,
+                cover_url: coverUrl,
+                published_year: doc.first_publish_year || null,
+                page_count: doc.number_of_pages_median || null,
+                isbn: isbn10,
+                isbn13: isbn13,
+                genres: Array.isArray(doc.subject) ? doc.subject.slice(0, 5) : [],
+                snippet: null,
+              });
+            }
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+    }
+
+    // Check if we already have an exact or strong title match
+    const normQuery = normalizeTitle(query);
+    const hasExactTitleMatch = olResults.some(
+      (r) =>
+        normalizeTitle(r.title).includes(normQuery) ||
+        normQuery.includes(normalizeTitle(r.title))
+    );
+
+    // If Open Library yielded fewer than 5 results OR missing exact match, supplement with Google Books and Gemini
+    if (olResults.length < 5 || !hasExactTitleMatch) {
+      const [gbResults, geminiResults] = await Promise.all([
+        searchGoogleBooks(query),
+        searchGeminiBooks(query),
+      ]);
+
       const existingKeys = new Set(olResults.map((r) => normalizeTitle(r.title)));
 
-      for (const gb of gbResults) {
-        const norm = normalizeTitle(gb.title);
+      for (const item of [...geminiResults, ...gbResults]) {
+        const norm = normalizeTitle(item.title);
         if (!existingKeys.has(norm)) {
           existingKeys.add(norm);
-          olResults.push(gb);
+          // If this is an exact title match for our query, prioritize at the front
+          if (norm.includes(normQuery) || normQuery.includes(norm)) {
+            olResults.unshift(item);
+          } else {
+            olResults.push(item);
+          }
         }
       }
     }
