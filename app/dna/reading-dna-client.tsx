@@ -19,6 +19,7 @@ import {
   Loader2,
   ExternalLink,
   BarChart3,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -49,12 +50,19 @@ export function ReadingDnaClient() {
   const [copied, setCopied] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [downloadSuccess, setDownloadSuccess] = React.useState(false);
+  const [isOwner, setIsOwner] = React.useState(true);
+  const [recalculating, setRecalculating] = React.useState(false);
+  const [recalculateSuccess, setRecalculateSuccess] = React.useState(false);
+  const [recalculateError, setRecalculateError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const url = userParam ? `/api/profile?user=${encodeURIComponent(userParam)}` : "/api/profile";
     fetch(url)
       .then((res) => res.json())
       .then((data) => {
+        if (typeof data?.isOwner === "boolean") {
+          setIsOwner(data.isOwner);
+        }
         if (data?.tasteProfile) {
           setProfile(data.tasteProfile);
           if (data?.stats) {
@@ -65,6 +73,38 @@ export function ReadingDnaClient() {
       .catch((err) => console.error("Could not load DNA profile:", err))
       .finally(() => setLoading(false));
   }, [userParam]);
+
+  const handleRecalculate = async () => {
+    if (recalculating) return;
+    setRecalculating(true);
+    setRecalculateError(null);
+    setRecalculateSuccess(false);
+
+    try {
+      const res = await fetch("/api/dna/recalculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to recalculate Reading DNA.");
+      }
+
+      if (data.tasteProfile) {
+        setProfile(data.tasteProfile);
+        setRecalculateSuccess(true);
+        setTimeout(() => setRecalculateSuccess(false), 4000);
+      }
+    } catch (err: any) {
+      console.error("Recalculate DNA error:", err);
+      setRecalculateError(err.message || "Failed to recalculate Reading DNA.");
+      setTimeout(() => setRecalculateError(null), 5000);
+    } finally {
+      setRecalculating(false);
+    }
+  };
 
   const getShareUrl = () => {
     if (typeof window === "undefined") return "";
@@ -167,20 +207,43 @@ export function ReadingDnaClient() {
   if (!profile) {
     return (
       <div className="container mx-auto flex min-h-[65vh] max-w-3xl flex-col items-center justify-center px-4 py-16 text-center">
+        {recalculateError && (
+          <div className="fixed bottom-20 sm:bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-destructive/40 bg-card/95 px-4 py-3 text-xs font-semibold text-destructive shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <ShieldAlert className="size-4 text-destructive" />
+            <span>{recalculateError}</span>
+          </div>
+        )}
         <div className="flex size-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground mb-4">
           <Dna className="size-7" />
         </div>
         <h2 className="text-2xl font-bold tracking-tight">No Reading DNA Found Yet</h2>
         <p className="mt-2 text-sm text-muted-foreground max-w-md mb-8 leading-relaxed">
-          Import your Goodreads or StoryGraph library export to extract your unique reader archetype, narrative tropes, and pacing profile.
+          Import your Goodreads or StoryGraph library export, or calculate your Reading DNA directly from books on your shelves.
         </p>
-        <Link href="/import">
-          <Button size="lg" className="gap-2 font-semibold">
-            <BookOpen className="size-4" />
-            <span>Import Reading History</span>
-            <ArrowRight className="size-4" />
-          </Button>
-        </Link>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          {isOwner && (
+            <Button
+              onClick={handleRecalculate}
+              disabled={recalculating}
+              size="lg"
+              className="gap-2 font-semibold"
+            >
+              {recalculating ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              <span>{recalculating ? "Analyzing Library..." : "Generate from Library"}</span>
+            </Button>
+          )}
+          <Link href="/import">
+            <Button size="lg" variant={isOwner ? "outline" : "default"} className="gap-2 font-semibold">
+              <BookOpen className="size-4" />
+              <span>Import Reading History</span>
+              <ArrowRight className="size-4" />
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -192,6 +255,20 @@ export function ReadingDnaClient() {
   return (
     <div className="container mx-auto flex max-w-5xl flex-col px-4 py-6 sm:py-12 pb-28 sm:pb-16">
       {/* Toast Notification */}
+      {recalculateSuccess && (
+        <div className="fixed bottom-20 sm:bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-500/40 bg-card/95 px-4 py-3 text-xs font-semibold text-emerald-500 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <Sparkles className="size-4 text-emerald-500" />
+          <span>Reading DNA refreshed from your latest library!</span>
+        </div>
+      )}
+
+      {recalculateError && (
+        <div className="fixed bottom-20 sm:bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-destructive/40 bg-card/95 px-4 py-3 text-xs font-semibold text-destructive shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <ShieldAlert className="size-4 text-destructive" />
+          <span>{recalculateError}</span>
+        </div>
+      )}
+
       {copied && (
         <div className="fixed bottom-20 sm:bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-500/40 bg-card/95 px-4 py-3 text-xs font-semibold text-emerald-500 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-200">
           <Check className="size-4 text-emerald-500" />
@@ -228,6 +305,18 @@ export function ReadingDnaClient() {
 
         {/* Action Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {isOwner && (
+            <Button
+              onClick={handleRecalculate}
+              disabled={recalculating}
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs font-medium border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+            >
+              <RefreshCw className={`size-3.5 ${recalculating ? "animate-spin" : ""}`} />
+              <span>{recalculating ? "Analyzing Library..." : "Refresh DNA"}</span>
+            </Button>
+          )}
           <Button
             onClick={handleCopyLink}
             variant="outline"

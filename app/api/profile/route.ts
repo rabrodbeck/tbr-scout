@@ -77,6 +77,7 @@ export async function GET(req: Request) {
         return NextResponse.json({
             profile: safeProfile,
             tasteProfile: taste,
+            isOwner,
             stats: {
                 totalBooks: totalBooks || 0,
                 readCount: readCount || 0,
