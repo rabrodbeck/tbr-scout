@@ -135,6 +135,13 @@ export function parseGoodreadsCsv(csvContent: string): ParseResult {
       .map((s) => cleanWhitespace(s))
       .filter((s) => s.length > 0);
 
+    const ownedCopies = parseInt(row["Owned Copies"] || "0", 10) || 0;
+    const isOwned =
+      ownedCopies > 0 ||
+      userShelves.some(
+        (s) => s.toLowerCase() === "owned" || s.toLowerCase() === "currently-owned"
+      );
+
     books.push({
       goodreadsId: row["Book Id"]?.trim() || "",
       title: cleanWhitespace(rawTitle),
@@ -157,6 +164,7 @@ export function parseGoodreadsCsv(csvContent: string): ParseResult {
       userShelves,
       userReview: row["My Review"]?.trim() || null,
       readCount: parseInt(row["Read Count"] || "0", 10) || 0,
+      isOwned,
     });
   }
 

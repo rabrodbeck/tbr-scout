@@ -62,6 +62,7 @@ export interface AddedBookItem {
   date_read: string | null;
   user_review: string | null;
   user_shelves: string[];
+  is_owned?: boolean;
 }
 
 export interface ExistingBookShelfInfo {
@@ -75,6 +76,7 @@ export interface ExistingBookShelfInfo {
   date_read?: string | null;
   isbn?: string | null;
   isbn13?: string | null;
+  is_owned?: boolean;
 }
 
 // Module-level library cache so the modal recognizes shelves instantly across renders
@@ -226,6 +228,7 @@ export function AddBookModal({
 
   // Shelf & rating form state
   const [targetShelf, setTargetShelf] = React.useState<ShelfType>("to-read");
+  const [isOwned, setIsOwned] = React.useState(false);
   const [rating, setRating] = React.useState<number | null>(null);
   const [hoverRating, setHoverRating] = React.useState<number | null>(null);
   const [dateRead, setDateRead] = React.useState<string>("");
@@ -242,6 +245,7 @@ export function AddBookModal({
       setResults([]);
       setSelectedBook(null);
       setTargetShelf("to-read");
+      setIsOwned(false);
       setRating(null);
       setDateRead("");
       setUserReview("");
@@ -432,11 +436,13 @@ export function AddBookModal({
           : new Date().toISOString().split("T")[0]
       );
       setUserReview(existing.user_review || "");
+      setIsOwned(Boolean(existing.is_owned));
     } else {
       setTargetShelf("to-read");
       setRating(null);
       setDateRead(new Date().toISOString().split("T")[0]);
       setUserReview("");
+      setIsOwned(false);
     }
   };
 
@@ -470,6 +476,7 @@ export function AddBookModal({
           rating: rating,
           user_review: userReview.trim() || null,
           date_read: targetShelf === "read" ? dateRead : null,
+          is_owned: isOwned,
         }),
       });
 
@@ -980,6 +987,35 @@ export function AddBookModal({
                     <span className="text-xs sm:text-sm font-medium">Did Not Finish</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Ownership Toggle */}
+              <div className="flex items-center justify-between p-3.5 rounded-xl border border-border/50 bg-card/40">
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={`p-1.5 rounded-lg border transition-colors ${
+                      isOwned
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : "border-border/60 bg-muted/40 text-muted-foreground"
+                    }`}
+                  >
+                    <Bookmark className={`size-4 ${isOwned ? "fill-emerald-500" : ""}`} />
+                  </div>
+                  <div>
+                    <span className="text-xs sm:text-sm font-semibold text-foreground block">
+                      I own a copy of this book
+                    </span>
+                    <span className="text-[11px] text-muted-foreground block">
+                      Track physical or digital ownership in your personal library
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={isOwned}
+                  onChange={(e) => setIsOwned(e.target.checked)}
+                  className="size-4 rounded border-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                />
               </div>
 
               {/* Star Rating Section */}

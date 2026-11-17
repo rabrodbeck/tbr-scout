@@ -67,6 +67,7 @@ export async function GET(req: Request) {
         date_read,
         user_review,
         user_shelves,
+        is_owned,
         created_at,
         books (
           id,
@@ -111,6 +112,7 @@ export async function GET(req: Request) {
         date_read: ub.date_read || null,
         user_review: ub.user_review || null,
         user_shelves: ub.user_shelves || [],
+        is_owned: Boolean(ub.is_owned),
       };
     });
 
@@ -129,6 +131,7 @@ export async function GET(req: Request) {
       dnf: books.filter((b) => b.shelf === "did-not-finish").length,
       fiveStarCount: books.filter((b) => b.rating === 5).length,
       fourStarCount: books.filter((b) => b.rating === 4).length,
+      ownedCount: books.filter((b) => b.is_owned).length,
       avgRating,
     };
 
@@ -281,6 +284,7 @@ export async function POST(request: Request) {
       rating,
       user_review,
       date_read,
+      is_owned,
     } = body;
 
     if (!title?.trim() || !author?.trim()) {
@@ -444,6 +448,7 @@ export async function POST(request: Request) {
           date_read: parsedDateRead,
           user_review: user_review?.trim() || null,
           user_shelves: [targetShelf],
+          is_owned: Boolean(is_owned),
           updated_at: new Date().toISOString(),
         },
         { onConflict: "user_id,book_id" }
@@ -472,6 +477,7 @@ export async function POST(request: Request) {
       date_read: parsedDateRead,
       user_review: user_review?.trim() || null,
       user_shelves: [targetShelf],
+      is_owned: Boolean(userBook.is_owned ?? is_owned),
     };
 
     // 8. Check for Reading Goal milestones if added directly to read shelf
@@ -523,7 +529,7 @@ export async function PATCH(request: Request) {
 
     // 2. Parse body
     const body = await request.json();
-    const { id, book_id, shelf, rating, user_review, date_read } = body;
+    const { id, book_id, shelf, rating, user_review, date_read, is_owned } = body;
 
     if (!id && !book_id) {
       return NextResponse.json(
@@ -566,6 +572,10 @@ export async function PATCH(request: Request) {
       updates.date_read = date_read ? new Date(date_read).toISOString() : null;
     }
 
+    if (is_owned !== undefined) {
+      updates.is_owned = Boolean(is_owned);
+    }
+
     // Apply update to user_books
     let query = supabase.from("user_books").update(updates).eq("user_id", userId);
 
@@ -583,6 +593,7 @@ export async function PATCH(request: Request) {
         date_read,
         user_review,
         user_shelves,
+        is_owned,
         book_id,
         books (
           id,
@@ -628,6 +639,7 @@ export async function PATCH(request: Request) {
       date_read: updatedRecord.date_read || null,
       user_review: updatedRecord.user_review || null,
       user_shelves: updatedRecord.user_shelves || [],
+      is_owned: Boolean(updatedRecord.is_owned),
     };
 
     // Check for Reading Goal milestones if updated to read shelf or completed

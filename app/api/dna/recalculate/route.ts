@@ -124,6 +124,7 @@ export async function POST(req: Request) {
         userShelves: Array.isArray(ub.user_shelves) ? ub.user_shelves : [],
         userReview: ub.user_review || null,
         readCount: ub.shelf === "read" ? 1 : 0,
+        isOwned: Boolean(ub.is_owned),
       };
     });
 

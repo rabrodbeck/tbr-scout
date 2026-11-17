@@ -22,6 +22,7 @@ export interface NormalizedBook {
     userShelves: string[];
     userReview: string | null;
     readCount: number;
+    isOwned: boolean;
 }
 
 export interface IngestionStats {

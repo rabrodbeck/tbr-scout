@@ -16,6 +16,7 @@ import {
   Plus,
   Loader2,
   ExternalLink,
+  Bookmark,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,7 @@ function ScanPageContent() {
   const [addingShelf, setAddingShelf] = React.useState<string | null>(null);
   const [addedShelf, setAddedShelf] = React.useState<string | null>(null);
   const [existingShelf, setExistingShelf] = React.useState<string | null>(null);
+  const [isOwned, setIsOwned] = React.useState(false);
 
   // Lookup book by ISBN
   const lookupIsbn = React.useCallback(async (isbnToFetch: string) => {
@@ -57,6 +59,7 @@ function ScanPageContent() {
     setFetchError(null);
     setAddedShelf(null);
     setExistingShelf(null);
+    setIsOwned(false);
 
     try {
       // Parallelize book search and user library shelf check
@@ -98,6 +101,9 @@ function ScanPageContent() {
           );
           if (existing) {
             setExistingShelf(existing.shelf);
+            if (existing.is_owned) {
+              setIsOwned(true);
+            }
           }
         } catch {}
       }
@@ -135,6 +141,7 @@ function ScanPageContent() {
           genres: book.genres,
           description: book.description,
           shelf,
+          is_owned: isOwned,
         }),
       });
 
@@ -158,6 +165,7 @@ function ScanPageContent() {
     setFetchError(null);
     setAddedShelf(null);
     setExistingShelf(null);
+    setIsOwned(false);
   };
 
   return (
@@ -278,6 +286,20 @@ function ScanPageContent() {
                       </Badge>
                     )}
                   </div>
+                </div>
+
+                {/* Ownership Toggle */}
+                <div className="pt-1">
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">
+                    <input
+                      type="checkbox"
+                      checked={isOwned}
+                      onChange={(e) => setIsOwned(e.target.checked)}
+                      className="size-4 rounded border-border text-primary focus:ring-primary accent-primary cursor-pointer"
+                    />
+                    <Bookmark className={`size-3.5 ${isOwned ? "fill-emerald-500 text-emerald-500" : "text-muted-foreground"}`} />
+                    <span className="font-medium">I own a copy of this book</span>
+                  </label>
                 </div>
 
                 {/* Quick Shelf Action Buttons */}

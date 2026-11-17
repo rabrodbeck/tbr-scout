@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Loader2,
   ExternalLink,
+  Bookmark,
 } from "lucide-react";
 import {
   Dialog,
@@ -46,6 +47,7 @@ export interface BookDetailItem {
   user_review: string | null;
   user_shelves: string[];
   description?: string | null;
+  is_owned?: boolean;
 }
 
 interface BookDetailModalProps {
@@ -54,6 +56,7 @@ interface BookDetailModalProps {
   book: BookDetailItem | null;
   onShelfChange?: (book: BookDetailItem, newShelf: BookDetailItem["shelf"]) => void;
   onRatingChange?: (book: BookDetailItem, newRating: number | null) => void;
+  onOwnershipChange?: (book: BookDetailItem, isOwned: boolean) => void;
   onBookDeleted?: (book: BookDetailItem) => void;
   onRecommend?: (book: BookDetailItem) => void;
 }
@@ -64,6 +67,7 @@ export function BookDetailModal({
   book,
   onShelfChange,
   onRatingChange,
+  onOwnershipChange,
   onBookDeleted,
   onRecommend,
 }: BookDetailModalProps) {
@@ -71,11 +75,14 @@ export function BookDetailModal({
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
   const [imgError, setImgError] = React.useState(false);
+  const [isOwned, setIsOwned] = React.useState(Boolean(book?.is_owned));
+  const [isUpdatingOwnership, setIsUpdatingOwnership] = React.useState(false);
 
   React.useEffect(() => {
     setShowDeleteConfirm(false);
     setDeleteError(null);
     setImgError(false);
+    setIsOwned(Boolean(book?.is_owned));
   }, [book, open]);
 
   const optimizedCoverUrl = React.useMemo(() => {
@@ -111,6 +118,35 @@ export function BookDetailModal({
       setDeleteError(err.message || "Failed to delete book");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleToggleOwnership = async () => {
+    if (!book) return;
+    const nextOwned = !isOwned;
+    setIsOwned(nextOwned);
+    setIsUpdatingOwnership(true);
+    try {
+      const res = await fetch("/api/library", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: book.id,
+          book_id: book.book_id,
+          is_owned: nextOwned,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to update ownership");
+      }
+
+      onOwnershipChange?.(book, nextOwned);
+    } catch (err) {
+      console.error("Failed to update ownership:", err);
+      setIsOwned(!nextOwned); // rollback
+    } finally {
+      setIsUpdatingOwnership(false);
     }
   };
 
@@ -197,13 +233,58 @@ export function BookDetailModal({
                     </Badge>
                   )
                 )}
+                {isOwned && (
+                  <Badge variant="outline" className="text-[10px] gap-1 font-semibold text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 py-0">
+                    <Bookmark className="size-2.5 fill-emerald-500 text-emerald-500" />
+                    <span>Owned</span>
+                  </Badge>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Interactive Controls: Shelf Switcher & Rating */}
+        {/* Interactive Controls: Shelf Switcher, Ownership & Rating */}
         <div className="p-5 sm:p-6 space-y-5 max-h-[60vh] overflow-y-auto">
+          {/* Ownership Status Toggle */}
+          <div className="flex items-center justify-between p-3.5 rounded-xl border border-border/50 bg-muted/20">
+            <div className="flex items-center gap-2.5">
+              <div
+                className={`p-2 rounded-lg border transition-colors ${
+                  isOwned
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    : "border-border/60 bg-card/60 text-muted-foreground"
+                }`}
+              >
+                <Bookmark className={`size-4 ${isOwned ? "fill-emerald-500" : ""}`} />
+              </div>
+              <div>
+                <span className="text-xs sm:text-sm font-bold text-foreground block">
+                  I own a copy of this book
+                </span>
+                <span className="text-[11px] text-muted-foreground block">
+                  {isOwned ? "Marked in your personal collection" : "Not marked as owned"}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isOwned}
+              disabled={isUpdatingOwnership}
+              onClick={handleToggleOwnership}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+                isOwned ? "bg-emerald-500" : "bg-muted-foreground/30"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block size-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                  isOwned ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Shelf Selector */}
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block mb-2">

@@ -13,6 +13,7 @@ import {
   Sparkles,
   ArrowUpDown,
   BookMarked,
+  Bookmark,
   Layers,
   ArrowRight,
   Plus,
@@ -62,6 +63,7 @@ interface BookItem {
   date_read: string | null;
   user_review: string | null;
   user_shelves: string[];
+  is_owned?: boolean;
 }
 
 interface LibraryStats {
@@ -72,6 +74,7 @@ interface LibraryStats {
   dnf: number;
   fiveStarCount: number;
   fourStarCount: number;
+  ownedCount: number;
   avgRating: string | null;
 }
 
@@ -262,6 +265,7 @@ export default function LibraryPage() {
   const [activeShelf, setActiveShelf] = React.useState<ShelfFilter>("all");
   const [selectedYear, setSelectedYear] = React.useState<YearFilter>("all");
   const [minRating, setMinRating] = React.useState<number | null>(null);
+  const [ownedOnly, setOwnedOnly] = React.useState(false);
   const [sortBy, setSortBy] = React.useState<SortOption>("rating-desc");
 
   // Friend Recommendations State (Issue #38)
@@ -423,6 +427,7 @@ export default function LibraryPage() {
       dnf: books.filter((b) => b.shelf === "did-not-finish").length,
       fiveStarCount: books.filter((b) => b.rating === 5).length,
       fourStarCount: books.filter((b) => b.rating === 4).length,
+      ownedCount: books.filter((b) => b.is_owned).length,
       avgRating,
     };
   }, [books, loading]);
@@ -660,6 +665,21 @@ export default function LibraryPage() {
     setSelectedBook((prev) => (prev ? { ...prev, rating: newRating } : null));
   };
 
+  const handleOwnershipChange = (book: BookDetailItem, isOwned: boolean) => {
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === book.id || b.book_id === book.book_id ? { ...b, is_owned: isOwned } : b
+      )
+    );
+    setSelectedBook((prev) => (prev ? { ...prev, is_owned: isOwned } : null));
+    setToastMessage(
+      isOwned
+        ? `Marked "${book.title}" as owned!`
+        : `Unmarked "${book.title}" as owned.`
+    );
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const handleBookDeleted = (deletedBook: BookDetailItem) => {
     setBooks((prev) => prev.filter((b) => b.id !== deletedBook.id));
     setToastMessage(`Removed "${deletedBook.title}" from your library.`);
@@ -677,6 +697,11 @@ export default function LibraryPage() {
           activeShelf !== "series" &&
           book.shelf !== activeShelf
         ) {
+          return false;
+        }
+
+        // Owned Only Filter
+        if (ownedOnly && !book.is_owned) {
           return false;
         }
 
@@ -727,7 +752,7 @@ export default function LibraryPage() {
         }
         return 0;
       });
-  }, [books, activeShelf, selectedYear, minRating, search, sortBy]);
+  }, [books, activeShelf, selectedYear, minRating, search, sortBy, ownedOnly]);
 
   if (loading) {
     return (
@@ -1121,41 +1146,61 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Rating Filter Pills */}
-      <div className="flex items-center gap-2 mb-6 overflow-x-auto text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground/80 shrink-0">Filter by Rating:</span>
+      {/* Secondary Filter Toolbar: Owned Only & Rating */}
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-6 text-xs text-muted-foreground">
+        {/* Owned Only Filter Toggle */}
         <button
-          onClick={() => setMinRating(null)}
-          className={`px-2.5 py-1 rounded-full border transition-all ${
-            minRating === null
-              ? "bg-primary/10 border-primary text-primary font-bold"
-              : "border-border/60 hover:border-foreground/40"
+          type="button"
+          onClick={() => setOwnedOnly((prev) => !prev)}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all cursor-pointer font-semibold ${
+            ownedOnly
+              ? "bg-emerald-500/15 border-emerald-500 text-emerald-600 dark:text-emerald-400 font-bold shadow-xs ring-1 ring-emerald-500/30"
+              : "border-border/60 hover:border-foreground/40 text-foreground/80 hover:text-foreground"
           }`}
         >
-          All
+          <Bookmark className={`size-3.5 ${ownedOnly ? "fill-emerald-500 text-emerald-500" : "text-muted-foreground"}`} />
+          <span>Owned Only</span>
+          <span className="text-[10px] opacity-75 font-mono">({stats?.ownedCount || 0})</span>
         </button>
-        <button
-          onClick={() => setMinRating(5)}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all ${
-            minRating === 5
-              ? "bg-amber-500/15 border-amber-500 text-amber-500 font-bold"
-              : "border-border/60 hover:border-foreground/40"
-          }`}
-        >
-          <Star className="size-3 fill-amber-500 text-amber-500" />
-          <span>5 Stars ({stats?.fiveStarCount || 0})</span>
-        </button>
-        <button
-          onClick={() => setMinRating(4)}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all ${
-            minRating === 4
-              ? "bg-amber-500/15 border-amber-500 text-amber-500 font-bold"
-              : "border-border/60 hover:border-foreground/40"
-          }`}
-        >
-          <Star className="size-3 fill-amber-500 text-amber-500" />
-          <span>4+ Stars ({(stats?.fiveStarCount || 0) + (stats?.fourStarCount || 0)})</span>
-        </button>
+
+        <span className="text-border/60 hidden sm:inline">|</span>
+
+        {/* Rating Filter Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <span className="font-semibold text-foreground/80 shrink-0">Rating:</span>
+          <button
+            onClick={() => setMinRating(null)}
+            className={`px-2.5 py-1 rounded-full border transition-all ${
+              minRating === null
+                ? "bg-primary/10 border-primary text-primary font-bold"
+                : "border-border/60 hover:border-foreground/40"
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setMinRating(5)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all ${
+              minRating === 5
+                ? "bg-amber-500/15 border-amber-500 text-amber-500 font-bold"
+                : "border-border/60 hover:border-foreground/40"
+            }`}
+          >
+            <Star className="size-3 fill-amber-500 text-amber-500" />
+            <span>5 Stars ({stats?.fiveStarCount || 0})</span>
+          </button>
+          <button
+            onClick={() => setMinRating(4)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all ${
+              minRating === 4
+                ? "bg-amber-500/15 border-amber-500 text-amber-500 font-bold"
+                : "border-border/60 hover:border-foreground/40"
+            }`}
+          >
+            <Star className="size-3 fill-amber-500 text-amber-500" />
+            <span>4+ Stars ({(stats?.fiveStarCount || 0) + (stats?.fourStarCount || 0)})</span>
+          </button>
+        </div>
       </div>
 
       {/* Lifetime Reads Dedicated Showcase Banner */}
@@ -1325,6 +1370,7 @@ export default function LibraryPage() {
               handleShelfChangeTab("all");
               handleYearChangeTab("all");
               setMinRating(null);
+              setOwnedOnly(false);
             }}
           >
             Reset Filters
@@ -1363,6 +1409,16 @@ export default function LibraryPage() {
                           onShelfChange={(newShelf) => handleShelfChange(book, newShelf)}
                         />
                       </div>
+
+                      {/* Owned Copy Subtle Corner Badge */}
+                      {book.is_owned && (
+                        <div
+                          className="absolute top-1.5 right-1.5 z-10 p-1 rounded-md bg-background/85 backdrop-blur-xs border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 shadow-xs"
+                          title="You own a copy of this book"
+                        >
+                          <Bookmark className="size-3 fill-emerald-500 text-emerald-500" />
+                        </div>
+                      )}
                     </div>
 
                     {/* Interactive 1-5 Star Rating Controls */}
@@ -1506,6 +1562,7 @@ export default function LibraryPage() {
         book={selectedBook}
         onShelfChange={handleModalShelfChange}
         onRatingChange={handleModalRatingChange}
+        onOwnershipChange={handleOwnershipChange}
         onBookDeleted={handleBookDeleted}
         onRecommend={(b) => {
           setRecommendBook({

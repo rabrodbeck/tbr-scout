@@ -72,4 +72,27 @@ describe("Goodreads Normalizer", () => {
     const headerOnly = parseGoodreadsCsv("Book Id,Title,Author\n");
     expect(headerOnly.books).toHaveLength(0);
   });
+
+  it("extracts ownership status from Owned Copies column and custom shelves", () => {
+    const sampleCsv = `Book Id,Title,Author,Exclusive Shelf,Bookshelves,Owned Copies
+1001,Dune,Frank Herbert,read,"sci-fi, favorites",1
+1002,Hyperion,Dan Simmons,to-read,"owned, space-opera",0
+1003,Snow Crash,Neal Stephenson,read,"cyberpunk",0
+1004,Foundation,Isaac Asimov,to-read,"currently-owned",0`;
+
+    const { books } = parseGoodreadsCsv(sampleCsv);
+    expect(books).toHaveLength(4);
+
+    const dune = books.find((b) => b.title === "Dune");
+    expect(dune?.isOwned).toBe(true);
+
+    const hyperion = books.find((b) => b.title === "Hyperion");
+    expect(hyperion?.isOwned).toBe(true);
+
+    const snowCrash = books.find((b) => b.title === "Snow Crash");
+    expect(snowCrash?.isOwned).toBe(false);
+
+    const foundation = books.find((b) => b.title === "Foundation");
+    expect(foundation?.isOwned).toBe(true);
+  });
 });

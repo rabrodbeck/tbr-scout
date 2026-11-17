@@ -353,6 +353,7 @@ export async function POST(req: Request) {
                         date_read: b.dateRead,
                         user_review: b.userReview,
                         user_shelves: b.userShelves,
+                        is_owned: b.isOwned,
                     });
                 }
             }

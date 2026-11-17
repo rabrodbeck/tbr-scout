@@ -8,6 +8,7 @@ interface BookItem {
   shelf: "read" | "currently-reading" | "to-read" | "did-not-finish";
   rating: number | null;
   date_read: string | null;
+  is_owned?: boolean;
 }
 
 // Pure helper replicating the library state machine used in LibraryPage and /api/library
@@ -59,6 +60,7 @@ function computeLibraryStats(books: BookItem[]) {
     dnf: books.filter((b) => b.shelf === "did-not-finish").length,
     fiveStarCount: books.filter((b) => b.rating === 5).length,
     fourStarCount: books.filter((b) => b.rating === 4).length,
+    ownedCount: books.filter((b) => b.is_owned).length,
     avgRating,
   };
 }
@@ -141,6 +143,53 @@ describe("Library Shelf & Rating Management Engine (Phase 1, Issues #34, #35)", 
       expect(stats.fourStarCount).toBe(1);
       // Average of 5, 4, and 2 is 11 / 3 = 3.67 -> "3.7"
       expect(stats.avgRating).toBe("3.7");
+    });
+  });
+
+  describe("Book Ownership Tracking", () => {
+    it("preserves shelf and rating attributes when toggling ownership", () => {
+      const book: BookItem = {
+        id: "ub-1",
+        book_id: "b-1",
+        title: "Dune",
+        author: "Frank Herbert",
+        shelf: "to-read",
+        rating: null,
+        date_read: null,
+        is_owned: false,
+      };
+
+      const ownedBook: BookItem = { ...book, is_owned: true };
+      expect(ownedBook.is_owned).toBe(true);
+      expect(ownedBook.shelf).toBe("to-read");
+      expect(ownedBook.rating).toBeNull();
+    });
+
+    it("filters books by ownedOnly flag without mutating original collection", () => {
+      const library: BookItem[] = [
+        { id: "1", book_id: "b1", title: "Book 1", author: "A1", shelf: "to-read", rating: null, date_read: null, is_owned: true },
+        { id: "2", book_id: "b2", title: "Book 2", author: "A2", shelf: "to-read", rating: null, date_read: null, is_owned: false },
+        { id: "3", book_id: "b3", title: "Book 3", author: "A3", shelf: "read", rating: 5, date_read: null, is_owned: true },
+      ];
+
+      const ownedOnlyFilter = (books: BookItem[], ownedOnly: boolean) =>
+        books.filter((b) => !ownedOnly || b.is_owned);
+
+      expect(ownedOnlyFilter(library, false)).toHaveLength(3);
+      expect(ownedOnlyFilter(library, true)).toHaveLength(2);
+      expect(ownedOnlyFilter(library, true).map((b) => b.title)).toEqual(["Book 1", "Book 3"]);
+    });
+
+    it("tracks owned count accurately in reactive stats", () => {
+      const library: BookItem[] = [
+        { id: "1", book_id: "b1", title: "Book 1", author: "A1", shelf: "to-read", rating: null, date_read: null, is_owned: true },
+        { id: "2", book_id: "b2", title: "Book 2", author: "A2", shelf: "read", rating: 4, date_read: null, is_owned: true },
+        { id: "3", book_id: "b3", title: "Book 3", author: "A3", shelf: "currently-reading", rating: null, date_read: null, is_owned: false },
+      ];
+
+      const stats = computeLibraryStats(library);
+      expect(stats.total).toBe(3);
+      expect(stats.ownedCount).toBe(2);
     });
   });
 });

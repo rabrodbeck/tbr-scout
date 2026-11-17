@@ -196,10 +196,10 @@ describe("Phase 5: Mobile & Native PWA Polish", () => {
 
     it("saves and retrieves library books and stats from offline storage", () => {
       const mockBooks = [
-        { id: "1", title: "Dune", author: "Frank Herbert", shelf: "read" },
-        { id: "2", title: "Neuromancer", author: "William Gibson", shelf: "to-read" },
+        { id: "1", title: "Dune", author: "Frank Herbert", shelf: "read", is_owned: true },
+        { id: "2", title: "Neuromancer", author: "William Gibson", shelf: "to-read", is_owned: false },
       ];
-      const mockStats = { total: 2, read: 1 };
+      const mockStats = { total: 2, read: 1, ownedCount: 1 };
 
       const saved = saveOfflineLibrary(mockBooks, mockStats);
       expect(saved).toBe(true);
@@ -208,7 +208,10 @@ describe("Phase 5: Mobile & Native PWA Polish", () => {
       expect(cached).not.toBeNull();
       expect(cached?.books.length).toBe(2);
       expect(cached?.books[0].title).toBe("Dune");
+      expect(cached?.books[0].is_owned).toBe(true);
+      expect(cached?.books[1].is_owned).toBe(false);
       expect(cached?.stats.total).toBe(2);
+      expect(cached?.stats.ownedCount).toBe(1);
       expect(cached?.timestamp).toBeGreaterThan(0);
     });
 

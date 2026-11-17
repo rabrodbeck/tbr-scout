@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
         date_read,
         user_review,
         user_shelves,
+        is_owned,
         created_at,
         book_id,
         books (
@@ -124,7 +125,7 @@ export async function GET(request: NextRequest) {
           Spoiler: "",
           "Private Notes": "",
           "Read Count": ub.shelf === "read" ? 1 : 0,
-          "Owned Copies": 0,
+          "Owned Copies": ub.is_owned ? 1 : 0,
         };
       });
 
@@ -181,6 +182,7 @@ export async function GET(request: NextRequest) {
           date_read: ub.date_read || null,
           user_review: ub.user_review || null,
           user_shelves: ub.user_shelves || [],
+          is_owned: Boolean(ub.is_owned),
           published_year: book?.published_year || null,
           page_count: book?.page_count || null,
           isbn: book?.isbn || null,

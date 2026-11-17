@@ -32,4 +32,11 @@ describe("CSV Export Formula Sanitization (SEC / Issue #24)", () => {
     expect(sanitizeCsvCell(0)).toBe("0");
     expect(sanitizeCsvCell(42)).toBe("42");
   });
+
+  it("safely sanitizes Owned Copies integer representations in CSV export", () => {
+    const ownedCopyCount = 1;
+    const unownedCopyCount = 0;
+    expect(sanitizeCsvCell(ownedCopyCount)).toBe("1");
+    expect(sanitizeCsvCell(unownedCopyCount)).toBe("0");
+  });
 });
